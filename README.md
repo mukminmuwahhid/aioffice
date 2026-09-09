@@ -30,6 +30,19 @@ Each run writes to `runs/<timestamp>_<mission-slug>/`:
 - `run.json` — the same data structured, for auditing or feeding into
   another tool
 
+### Dashboard (optional)
+
+```bash
+python webapp.py
+# then open http://127.0.0.1:5000
+```
+
+A local Flask dashboard: type a mission, click "Run mission", and watch
+each of the ten role cards flip from Standby → Queued → Running →
+Done/Failed as `office/chief.py` works through the dependency graph. It
+polls `GET /status` every ~1.2s and reuses `run_mission`/`save_run`
+directly, so dashboard runs land in `runs/` exactly like CLI runs.
+
 ## Test
 
 ```bash
@@ -86,10 +99,9 @@ no network access.
   per role (`office/config.py: MODEL_OVERRIDES`), not provider. Swapping in
   a second provider would mean adding a small adapter in
   `office/llm_client.py` and keying `MODEL_OVERRIDES` by provider+model.
-- **No persistent mission history/search across runs** — each run is a
-  self-contained folder; there's no index or dashboard over `runs/` yet
-  (the AdamSofi-style office-floor UI this was modeled after would sit on
-  top of this as a separate frontend reading `run.json` files).
+- **No persistent mission history/search across runs.** `webapp.py` gives
+  live status for the *current* run only (in-memory state, one process);
+  there's still no index/search over past `runs/*/run.json` folders.
 - **Single mission at a time** — no queue, so two people running missions
   concurrently just get two independent `runs/` folders; fine for solo use,
   would need a lock or a proper job queue for shared/production use.

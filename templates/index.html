@@ -1,0 +1,251 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>AI Web Office</title>
+<style>
+  :root {
+    --bg: #f4f5f7;
+    --panel: #ffffff;
+    --border: #e1e4e8;
+    --text: #1f2328;
+    --muted: #6b7280;
+    --accent: #4f46e5;
+    --standby: #9ca3af;
+    --queued: #2563eb;
+    --running: #d97706;
+    --done: #16a34a;
+    --failed: #dc2626;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, Segoe UI, Roboto, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+  }
+  header {
+    padding: 20px 32px;
+    background: var(--panel);
+    border-bottom: 1px solid var(--border);
+  }
+  header h1 { margin: 0; font-size: 20px; }
+  header p { margin: 4px 0 0; color: var(--muted); font-size: 13px; }
+
+  main { max-width: 1000px; margin: 0 auto; padding: 24px 32px 64px; }
+
+  .mission-box {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 16px;
+    margin-bottom: 24px;
+  }
+  .mission-box textarea {
+    width: 100%;
+    min-height: 70px;
+    resize: vertical;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 10px;
+    font-family: inherit;
+    font-size: 14px;
+  }
+  .mission-row { display: flex; gap: 12px; margin-top: 10px; align-items: center; }
+  button#run-btn {
+    background: var(--accent);
+    color: white;
+    border: none;
+    border-radius: 8px;
+    padding: 10px 20px;
+    font-size: 14px;
+    cursor: pointer;
+  }
+  button#run-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+  #phase-label { font-size: 13px; color: var(--muted); }
+
+  .board-title { font-size: 14px; font-weight: 600; margin: 24px 0 10px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; }
+
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+    gap: 12px;
+  }
+  .desk {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 14px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .desk .role-name { font-weight: 600; font-size: 14px; }
+  .badge {
+    align-self: flex-start;
+    font-size: 12px;
+    font-weight: 600;
+    padding: 3px 10px;
+    border-radius: 999px;
+    color: white;
+    text-transform: capitalize;
+  }
+  .badge.standby { background: var(--standby); }
+  .badge.queued { background: var(--queued); }
+  .badge.running { background: var(--running); }
+  .badge.done { background: var(--done); }
+  .badge.failed { background: var(--failed); }
+  .badge.running::after { content: ""; }
+
+  .deliverable {
+    margin-top: 28px;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 20px;
+    display: none;
+  }
+  .deliverable h2 { margin-top: 0; font-size: 16px; }
+  .deliverable pre {
+    white-space: pre-wrap;
+    font-family: inherit;
+    font-size: 14px;
+    line-height: 1.5;
+  }
+  .banner {
+    background: #fff7ed;
+    border: 1px solid #fdba74;
+    color: #9a3412;
+    padding: 8px 12px;
+    border-radius: 8px;
+    font-size: 13px;
+    margin-bottom: 12px;
+  }
+  .error-box {
+    margin-top: 16px;
+    background: #fef2f2;
+    border: 1px solid #fca5a5;
+    color: #991b1b;
+    padding: 12px;
+    border-radius: 8px;
+    font-size: 13px;
+    display: none;
+  }
+</style>
+</head>
+<body>
+<header>
+  <h1>AI Web Office</h1>
+  <p>Give the office a mission and watch each role pick up its work.</p>
+</header>
+
+<main>
+  <div class="mission-box">
+    <textarea id="mission-input" placeholder="e.g. Build a business website with a product catalog and contact form"></textarea>
+    <div class="mission-row">
+      <button id="run-btn">Run mission</button>
+      <span id="phase-label">Idle</span>
+    </div>
+  </div>
+
+  <div class="error-box" id="error-box"></div>
+
+  <div class="board-title">The office floor</div>
+  <div class="grid" id="desk-grid">
+    {% for role in roles %}
+    <div class="desk" data-role="{{ role.id }}">
+      <div class="role-name">{{ role.name }}</div>
+      <div class="badge standby">Standby</div>
+    </div>
+    {% endfor %}
+  </div>
+
+  <div class="deliverable" id="deliverable">
+    <h2>Deliverable</h2>
+    <div class="banner" id="review-banner"></div>
+    <h3>Synthesis</h3>
+    <pre id="synthesis-text"></pre>
+    <h3>Next actions</h3>
+    <pre id="next-actions-text"></pre>
+    <p id="run-dir-text" style="color: var(--muted); font-size: 13px;"></p>
+  </div>
+</main>
+
+<script>
+const runBtn = document.getElementById('run-btn');
+const missionInput = document.getElementById('mission-input');
+const phaseLabel = document.getElementById('phase-label');
+const deskGrid = document.getElementById('desk-grid');
+const deliverableBox = document.getElementById('deliverable');
+const errorBox = document.getElementById('error-box');
+
+let polling = null;
+
+function setBadge(deskEl, status) {
+  const badge = deskEl.querySelector('.badge');
+  badge.className = 'badge ' + status;
+  badge.textContent = status.charAt(0).toUpperCase() + status.slice(1);
+}
+
+async function runMission() {
+  const mission = missionInput.value.trim();
+  if (!mission) { return; }
+  errorBox.style.display = 'none';
+  deliverableBox.style.display = 'none';
+  const res = await fetch('/run', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ mission }),
+  });
+  const data = await res.json();
+  if (!data.ok) {
+    errorBox.textContent = data.error;
+    errorBox.style.display = 'block';
+    return;
+  }
+  runBtn.disabled = true;
+  startPolling();
+}
+
+function startPolling() {
+  if (polling) return;
+  polling = setInterval(pollStatus, 1200);
+  pollStatus();
+}
+
+function stopPolling() {
+  clearInterval(polling);
+  polling = null;
+}
+
+async function pollStatus() {
+  const res = await fetch('/status');
+  const data = await res.json();
+
+  phaseLabel.textContent = data.phase.charAt(0).toUpperCase() + data.phase.slice(1);
+
+  data.desks.forEach(desk => {
+    const deskEl = deskGrid.querySelector(`[data-role="${desk.id}"]`);
+    if (deskEl) setBadge(deskEl, desk.status);
+  });
+
+  if (data.phase === 'done') {
+    runBtn.disabled = false;
+    stopPolling();
+    deliverableBox.style.display = 'block';
+    document.getElementById('review-banner').textContent = data.deliverable.review_banner;
+    document.getElementById('synthesis-text').textContent = data.deliverable.synthesis;
+    document.getElementById('next-actions-text').textContent = data.deliverable.next_actions;
+    document.getElementById('run-dir-text').textContent = 'Saved to ' + data.run_dir;
+  } else if (data.phase === 'error') {
+    runBtn.disabled = false;
+    stopPolling();
+    errorBox.textContent = data.error;
+    errorBox.style.display = 'block';
+  }
+}
+
+runBtn.addEventListener('click', runMission);
+</script>
+</body>
+</html>
