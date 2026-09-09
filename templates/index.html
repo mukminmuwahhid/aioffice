@@ -252,6 +252,17 @@
   textarea#mission-input::placeholder { color: var(--dim); }
   textarea#mission-input:focus { outline: none; border-color: var(--blue); box-shadow: 0 0 0 1px var(--blue-dim); }
 
+  .mock-toggle {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 11px;
+    color: var(--muted);
+    cursor: pointer;
+  }
+  .mock-toggle input { accent-color: var(--green); }
+  .mock-toggle .mock-hint { color: var(--dim); }
+
   button#run-btn {
     background: var(--green-dim);
     color: var(--green);
@@ -403,10 +414,17 @@
   <aside class="mission-control">
     <div class="mc-header">
       <h2>Mission Control</h2>
-      <span class="phase-pill mono" id="phase-pill">Idle</span>
+      <div style="display:flex; gap:6px; align-items:center;">
+        <span class="phase-pill mono" id="mock-badge" style="display:none; color: var(--amber); border-color: var(--amber);">Mock</span>
+        <span class="phase-pill mono" id="phase-pill">Idle</span>
+      </div>
     </div>
 
     <textarea id="mission-input" placeholder="e.g. Build a business website with a product catalog and contact form"></textarea>
+    <label class="mock-toggle">
+      <input type="checkbox" id="mock-checkbox">
+      Mock mode <span class="mock-hint">(free - no real API calls)</span>
+    </label>
     <button id="run-btn">Run mission</button>
 
     <div class="error-box" id="error-box"></div>
@@ -489,10 +507,11 @@ async function runMission() {
   errorBox.style.display = 'none';
   deliverableToggle.classList.remove('visible');
   deliverableBody.classList.remove('open');
+  const mock = document.getElementById('mock-checkbox').checked;
   const res = await fetch('/run', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ mission }),
+    body: JSON.stringify({ mission, mock }),
   });
   const data = await res.json();
   if (!data.ok) {
@@ -520,6 +539,7 @@ async function pollStatus() {
 
   phasePill.className = 'phase-pill mono ' + data.phase;
   phasePill.textContent = data.phase.charAt(0).toUpperCase() + data.phase.slice(1);
+  document.getElementById('mock-badge').style.display = data.mock ? 'inline-block' : 'none';
 
   let running = 0, done = 0, failed = 0;
   data.desks.forEach(desk => {

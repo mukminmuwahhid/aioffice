@@ -30,18 +30,47 @@ Each run writes to `runs/<timestamp>_<mission-slug>/`:
 - `run.json` — the same data structured, for auditing or feeding into
   another tool
 
-### Dashboard (optional)
+### Mock mode (free — no API calls)
+
+Add `--mock` (CLI) or check the "Mock mode" box (dashboard) to run the full
+pipeline — decomposition, dependency ordering, concurrency, synthesis — with
+canned responses instead of real Anthropic calls. Useful for testing the
+orchestration itself without spending API credits:
+
+```bash
+python cli.py --mock "Build a business website with a product catalog and contact form."
+python live_cli.py --mock "..."
+```
+
+It's driven by the `AI_OFFICE_MOCK` env var (`office/config.py: is_mock_mode`),
+which `office/llm_client.py` checks before making any API call.
+
+### Live terminal dashboard
+
+```bash
+python live_cli.py "Build a business website with a product catalog and contact form."
+python live_cli.py --mock "..."   # combine with mock mode to test for free
+```
+
+A `rich`-powered terminal view of the same run: a live-updating table shows
+every role's status (QUEUED/RUNNING/DONE/FAILED), its dependencies, and
+elapsed time, while a scrolling log above it prints each hand-off as it
+happens (e.g. "Frontend Developer picked up T3, using work from UI/UX
+Designer").
+
+### Web dashboard (optional)
 
 ```bash
 python webapp.py
 # then open http://127.0.0.1:5000
 ```
 
-A local Flask dashboard: type a mission, click "Run mission", and watch
-each of the ten role cards flip from Standby → Queued → Running →
-Done/Failed as `office/chief.py` works through the dependency graph. It
-polls `GET /status` every ~1.2s and reuses `run_mission`/`save_run`
-directly, so dashboard runs land in `runs/` exactly like CLI runs.
+A local Flask dashboard: type a mission, optionally check "Mock mode", click
+"Run mission", and watch each of the ten role cards flip from Standby →
+Queued → Running → Done/Failed as `office/chief.py` works through the
+dependency graph. It polls `GET /status` every ~1.2s and reuses
+`run_mission`/`save_run` directly, so dashboard runs land in `runs/` exactly
+like CLI runs.
 
 ## Test
 

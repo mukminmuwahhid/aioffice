@@ -3,23 +3,40 @@
 Usage:
     python cli.py
     python cli.py "Build a business website with a product catalog and contact form."
+    python cli.py --mock "..."   # free - no real API calls
 """
 
 from __future__ import annotations
 
 import logging
+import os
 import sys
 
-from office.chief import run_mission
-from office.run_store import save_run
+if sys.platform == "win32":
+    # Windows consoles default to a legacy codepage (e.g. cp1252) that can't
+    # encode the emoji in the review banner; force UTF-8 regardless of
+    # which console/codepage is active.
+    for _stream in (sys.stdout, sys.stderr):
+        try:
+            _stream.reconfigure(encoding="utf-8")
+        except Exception:
+            pass
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 log = logging.getLogger("office.cli")
 
 
 def main() -> None:
-    if len(sys.argv) > 1:
-        mission = " ".join(sys.argv[1:]).strip()
+    args = sys.argv[1:]
+    if "--mock" in args:
+        os.environ["AI_OFFICE_MOCK"] = "1"
+        args = [a for a in args if a != "--mock"]
+
+    from office.chief import run_mission
+    from office.run_store import save_run
+
+    if args:
+        mission = " ".join(args).strip()
     else:
         mission = input(
             "What mission would you like the web development team to carry out?\n> "

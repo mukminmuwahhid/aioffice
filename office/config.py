@@ -31,3 +31,9 @@ def model_for_role(role: str) -> str:
 RUNS_DIR = Path(os.environ.get("AI_OFFICE_RUNS_DIR", "runs"))
 
 MAX_RETRIES = 2
+
+
+def is_mock_mode() -> bool:
+    """When true, llm_client returns canned responses instead of calling the
+    real Anthropic API - lets the whole pipeline be exercised for free."""
+    return os.environ.get("AI_OFFICE_MOCK", "").strip().lower() in ("1", "true", "yes")

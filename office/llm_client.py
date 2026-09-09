@@ -5,6 +5,7 @@ step so the result is always machine-parseable)."""
 from __future__ import annotations
 
 import logging
+import random
 import time
 from typing import Any, Dict, Optional
 
@@ -13,6 +14,26 @@ import anthropic
 from . import config
 
 log = logging.getLogger("office.llm_client")
+
+# A plausible-looking task breakdown used by call_tool in mock mode, so the
+# whole pipeline (dependency ordering, concurrency, synthesis) can be
+# exercised without an API key or any cost.
+_MOCK_SUBTASKS = [
+    {"id": "T1", "description": "Design the wireframes and user flow.", "role": "ui_ux_designer", "depends_on": []},
+    {"id": "T2", "description": "Define system architecture and tech stack.", "role": "solution_architect", "depends_on": []},
+    {"id": "T3", "description": "Build the frontend UI components.", "role": "frontend_developer", "depends_on": ["T1"]},
+    {"id": "T4", "description": "Build the backend API and data model.", "role": "backend_developer", "depends_on": ["T2"]},
+    {"id": "T5", "description": "Review the backend for security issues.", "role": "security_engineer", "depends_on": ["T4"]},
+    {"id": "T6", "description": "Draft a test plan covering frontend and backend.", "role": "qa_engineer", "depends_on": ["T3", "T4"]},
+    {"id": "T7", "description": "Write on-page copy and an SEO strategy.", "role": "content_marketing_agent", "depends_on": []},
+    {"id": "T8", "description": "Propose pricing tiers for this project.", "role": "pricing_proposal_agent", "depends_on": []},
+    {"id": "T9", "description": "Identify extra opportunities beyond the ask.", "role": "opportunity_scout", "depends_on": []},
+    {"id": "T10", "description": "Analyze competitors and market positioning.", "role": "prospect_analyst", "depends_on": []},
+]
+
+
+def _mock_delay() -> None:
+    time.sleep(random.uniform(0.4, 1.2))
 
 _client: Optional[anthropic.Anthropic] = None
 
@@ -48,6 +69,15 @@ def _with_retries(fn, *, retries: int = config.MAX_RETRIES):
 
 def call_text(system: str, user: str, *, model: str, max_tokens: int = 4096) -> str:
     """Plain text completion for a single role's turn."""
+    if config.is_mock_mode():
+        _mock_delay()
+        role_hint = system.strip().splitlines()[0][:100]
+        return (
+            f"[MOCK OUTPUT - no API call made]\n\n"
+            f"Role brief: {role_hint}\n\n"
+            f"Simulated draft response for:\n{user[:300]}"
+        )
+
     client = get_client()
 
     def _do() -> str:
@@ -74,6 +104,12 @@ def call_tool(
 ) -> Dict[str, Any]:
     """Force the model to respond via a single tool call and return its
     parsed input."""
+    if config.is_mock_mode():
+        _mock_delay()
+        if tool_name == "submit_task_breakdown":
+            return {"subtasks": _MOCK_SUBTASKS}
+        return {}
+
     client = get_client()
     tool = {
         "name": tool_name,

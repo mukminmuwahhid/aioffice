@@ -9,13 +9,14 @@ Usage:
 from __future__ import annotations
 
 import logging
+import os
 import threading
 import time
 from typing import Optional
 
 from flask import Flask, jsonify, render_template, request
 
-from office import chief, roles
+from office import chief, config, roles
 from office.run_store import save_run
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
@@ -126,9 +127,11 @@ def run():
     with _lock:
         if _state["phase"] in ("decomposing", "running", "synthesizing"):
             return jsonify({"ok": False, "error": "A mission is already running."}), 409
-        mission: Optional[str] = (request.get_json(silent=True) or {}).get("mission", "").strip()
+        body = request.get_json(silent=True) or {}
+        mission: Optional[str] = body.get("mission", "").strip()
         if not mission:
             return jsonify({"ok": False, "error": "Mission text is required."}), 400
+        os.environ["AI_OFFICE_MOCK"] = "1" if body.get("mock") else ""
         _reset_state(mission)
 
     threading.Thread(target=_run_in_background, args=(mission,), daemon=True).start()
@@ -162,6 +165,7 @@ def status():
                 "deliverable": _state["deliverable"],
                 "run_dir": _state["run_dir"],
                 "error": _state["error"],
+                "mock": config.is_mock_mode(),
             }
         )
 
