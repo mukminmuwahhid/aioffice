@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import logging
 import threading
+import time
 from typing import Optional
 
 from flask import Flask, jsonify, render_template, request
@@ -22,12 +23,26 @@ log = logging.getLogger("office.webapp")
 
 app = Flask(__name__)
 
+# Desk avatar glyphs per role - decorative only, no bearing on orchestration.
+ROLE_ICONS = {
+    "solution_architect": "\U0001F3D7",
+    "frontend_developer": "\U0001F5A5",
+    "backend_developer": "\U0001F5C4",
+    "ui_ux_designer": "\U0001F3A8",
+    "security_engineer": "\U0001F512",
+    "qa_engineer": "\U0001F41E",
+    "content_marketing_agent": "\U0001F4E3",
+    "pricing_proposal_agent": "\U0001F4B0",
+    "opportunity_scout": "\U0001F52D",
+    "prospect_analyst": "\U0001F4CA",
+}
+
 _lock = threading.Lock()
 _state = {
     "phase": "idle",  # idle | decomposing | running | synthesizing | done | error
     "mission": None,
     "order": [],
-    "subtasks": {},  # id -> {id, role, description, depends_on, status}
+    "subtasks": {},  # id -> {id, role, description, depends_on, status, started_at, finished_at}
     "deliverable": None,
     "run_dir": None,
     "error": None,
@@ -62,14 +77,18 @@ def _on_event(event: str, data: dict) -> None:
                     "description": t.description,
                     "depends_on": t.depends_on,
                     "status": "queued",
+                    "started_at": None,
+                    "finished_at": None,
                 }
                 for t in subtasks
             }
             _state["phase"] = "running"
         elif event == "subtask_start":
             _state["subtasks"][data["id"]]["status"] = "running"
+            _state["subtasks"][data["id"]]["started_at"] = time.time()
         elif event == "subtask_done":
             _state["subtasks"][data["id"]]["status"] = "failed" if data.get("error") else "done"
+            _state["subtasks"][data["id"]]["finished_at"] = time.time()
         elif event == "synthesize_start":
             _state["phase"] = "synthesizing"
 
@@ -96,7 +115,8 @@ def _run_in_background(mission: str) -> None:
 @app.route("/")
 def index():
     role_list = [
-        {"id": rid, "name": roles.ROLE_DISPLAY_NAMES[rid]} for rid in roles.ROLE_IDS
+        {"id": rid, "name": roles.ROLE_DISPLAY_NAMES[rid], "icon": ROLE_ICONS[rid]}
+        for rid in roles.ROLE_IDS
     ]
     return render_template("index.html", roles=role_list)
 
@@ -122,7 +142,14 @@ def status():
         for rid in roles.ROLE_IDS:
             matches = [t for t in _state["subtasks"].values() if t["role"] == rid]
             status_value = matches[0]["status"] if matches else "standby"
-            desks.append({"id": rid, "name": roles.ROLE_DISPLAY_NAMES[rid], "status": status_value})
+            desks.append(
+                {
+                    "id": rid,
+                    "name": roles.ROLE_DISPLAY_NAMES[rid],
+                    "icon": ROLE_ICONS[rid],
+                    "status": status_value,
+                }
+            )
 
         ordered_subtasks = [_state["subtasks"][sid] for sid in _state["order"]]
 
