@@ -38,6 +38,49 @@ ROLE_ICONS = {
     "prospect_analyst": "\U0001F4CA",
 }
 
+# Per-role identity accent (the desk's label color) - always constant,
+# separate from the live status color (which encodes queued/running/done).
+ROLE_ACCENTS = {
+    "solution_architect": "#6d8cff",
+    "frontend_developer": "#ff6fae",
+    "backend_developer": "#34d399",
+    "ui_ux_designer": "#b78bff",
+    "security_engineer": "#f2b84b",
+    "qa_engineer": "#38d6d6",
+    "content_marketing_agent": "#ff8a65",
+    "pricing_proposal_agent": "#5eb5ff",
+    "opportunity_scout": "#c792ff",
+    "prospect_analyst": "#7ee787",
+}
+
+# Where each role's desk sits on the office floor plan (see templates/index.html).
+FLOOR_LAYOUT = [
+    ("top1", "solution_architect"),
+    ("top2", "frontend_developer"),
+    ("top3", "backend_developer"),
+    ("left1", "ui_ux_designer"),
+    ("left2", "security_engineer"),
+    ("right1", "qa_engineer"),
+    ("right2", "content_marketing_agent"),
+    ("mid1", "pricing_proposal_agent"),
+    ("mid2", "opportunity_scout"),
+    ("bottom", "prospect_analyst"),
+]
+
+# One-line captions shown on each desk's nameplate.
+ROLE_TAGLINES = {
+    "solution_architect": "Defines system architecture, tech stack, integrations.",
+    "frontend_developer": "Builds UI components, responsive layouts, accessibility.",
+    "backend_developer": "Designs APIs, databases, server logic, authentication.",
+    "ui_ux_designer": "Wireframes, mockups, user flows, usability improvements.",
+    "security_engineer": "Reviews for vulnerabilities, compliance, secure coding.",
+    "qa_engineer": "Drafts test plans, unit/integration cases, bug checks.",
+    "content_marketing_agent": "Drafts copy, SEO strategy, landing page text.",
+    "pricing_proposal_agent": "Suggests pricing tiers, packages, business models.",
+    "opportunity_scout": "Identifies extra features/extensions for business value.",
+    "prospect_analyst": "Drafts competitor analysis, market positioning insights.",
+}
+
 _lock = threading.Lock()
 _state = {
     "phase": "idle",  # idle | decomposing | running | synthesizing | done | error
@@ -115,11 +158,17 @@ def _run_in_background(mission: str) -> None:
 
 @app.route("/")
 def index():
-    role_list = [
-        {"id": rid, "name": roles.ROLE_DISPLAY_NAMES[rid], "icon": ROLE_ICONS[rid]}
-        for rid in roles.ROLE_IDS
-    ]
-    return render_template("index.html", roles=role_list)
+    floor = {
+        slot: {
+            "id": rid,
+            "name": roles.ROLE_DISPLAY_NAMES[rid],
+            "icon": ROLE_ICONS[rid],
+            "accent": ROLE_ACCENTS[rid],
+            "tagline": ROLE_TAGLINES[rid],
+        }
+        for slot, rid in FLOOR_LAYOUT
+    }
+    return render_template("index.html", floor=floor)
 
 
 @app.route("/run", methods=["POST"])
@@ -171,4 +220,7 @@ def status():
 
 
 if __name__ == "__main__":
-    app.run(debug=True, port=5000)
+    # use_reloader=False: an in-memory mission state + background thread would
+    # get silently wiped mid-run if the dev-server auto-restarted (this
+    # machine's file-watcher fires spuriously on unrelated site-packages files).
+    app.run(debug=True, port=5000, use_reloader=False)
