@@ -19,14 +19,17 @@ def render_markdown(d: Deliverable) -> str:
     lines.append("## 2. Task Breakdown\n")
     for t in d.subtasks:
         dep = f" (depends on: {', '.join(t.depends_on)})" if t.depends_on else ""
-        lines.append(f"- **{t.id}** - {roles.ROLE_DISPLAY_NAMES[t.role]}: {t.description}{dep}")
+        lines.append(f"- **{t.id}** - {roles.display_name(t.role)}: {t.description}{dep}")
     lines.append("")
 
     lines.append("## 3. Agent Outputs\n")
+    by_id = {o.subtask_id: o for o in d.outputs}
     for t in d.subtasks:
-        out = next(o for o in d.outputs if o.subtask_id == t.id)
-        lines.append(f"### {roles.ROLE_DISPLAY_NAMES[t.role]} - {t.id}\n")
-        if out.error:
+        out = by_id.get(t.id)
+        lines.append(f"### {roles.display_name(t.role)} - {t.id}\n")
+        if out is None:
+            lines.append("_Not run._\n")
+        elif out.error:
             lines.append(f"_Failed: {out.error}_\n")
         else:
             lines.append(out.content + "\n")

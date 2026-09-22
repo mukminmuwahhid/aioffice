@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import logging
 import random
+import threading
 import time
 from typing import Any, Dict, Optional
 
@@ -14,6 +15,54 @@ import anthropic
 from . import config
 
 log = logging.getLogger("office.llm_client")
+
+_usage_lock = threading.Lock()
+_usage: Dict[str, Any] = {"input_tokens": 0, "output_tokens": 0, "calls": 0, "by_model": {}}
+
+
+def reset_usage() -> None:
+    with _usage_lock:
+        _usage.update({"input_tokens": 0, "output_tokens": 0, "calls": 0, "by_model": {}})
+
+
+def get_usage() -> Dict[str, Any]:
+    """Token totals since the last reset, plus a USD cost estimate."""
+    with _usage_lock:
+        snapshot = {
+            "input_tokens": _usage["input_tokens"],
+            "output_tokens": _usage["output_tokens"],
+            "calls": _usage["calls"],
+            "by_model": {m: dict(v) for m, v in _usage["by_model"].items()},
+        }
+
+    total_cost = 0.0
+    priced = False
+    for model, counts in snapshot["by_model"].items():
+        cost = config.estimate_cost(model, counts["input_tokens"], counts["output_tokens"])
+        counts["cost_usd"] = cost
+        if cost is not None:
+            total_cost += cost
+            priced = True
+    snapshot["cost_usd"] = round(total_cost, 6) if priced else None
+    return snapshot
+
+
+def _record_usage(model: str, resp: Any) -> None:
+    usage = getattr(resp, "usage", None)
+    if usage is None:
+        return
+    inp = getattr(usage, "input_tokens", 0) or 0
+    out = getattr(usage, "output_tokens", 0) or 0
+    with _usage_lock:
+        _usage["input_tokens"] += inp
+        _usage["output_tokens"] += out
+        _usage["calls"] += 1
+        per_model = _usage["by_model"].setdefault(
+            model, {"input_tokens": 0, "output_tokens": 0, "calls": 0}
+        )
+        per_model["input_tokens"] += inp
+        per_model["output_tokens"] += out
+        per_model["calls"] += 1
 
 # A plausible-looking task breakdown used by call_tool in mock mode, so the
 # whole pipeline (dependency ordering, concurrency, synthesis) can be
@@ -41,21 +90,32 @@ _client: Optional[anthropic.Anthropic] = None
 def get_client() -> anthropic.Anthropic:
     global _client
     if _client is None:
-        if not config.ANTHROPIC_API_KEY:
+        if not config.api_key():
             raise RuntimeError(
                 "ANTHROPIC_API_KEY is not set. Copy .env.example to .env and fill it in."
             )
-        _client = anthropic.Anthropic(api_key=config.ANTHROPIC_API_KEY)
+        _client = anthropic.Anthropic(api_key=config.api_key())
     return _client
 
 
-def _with_retries(fn, *, retries: int = config.MAX_RETRIES):
+def _is_retryable(exc: Exception) -> bool:
+    """Only transient transport/status failures should consume retry attempts."""
+    if isinstance(exc, anthropic.APIConnectionError):
+        return True
+    return getattr(exc, "status_code", None) in {408, 409, 429, 500, 502, 503, 504}
+
+
+def _with_retries(fn, *, retries: Optional[int] = None):
+    if retries is None:
+        retries = config.max_retries()
     last_exc: Optional[Exception] = None
     for attempt in range(retries + 1):
         try:
             return fn()
         except (anthropic.APIStatusError, anthropic.APIConnectionError) as exc:
             last_exc = exc
+            if not _is_retryable(exc):
+                raise
             if attempt < retries:
                 wait = 2 ** attempt
                 log.warning(
@@ -87,6 +147,7 @@ def call_text(system: str, user: str, *, model: str, max_tokens: int = 4096) -> 
             system=system,
             messages=[{"role": "user", "content": user}],
         )
+        _record_usage(model, resp)
         return "".join(block.text for block in resp.content if block.type == "text")
 
     return _with_retries(_do)
@@ -126,6 +187,7 @@ def call_tool(
             tool_choice={"type": "tool", "name": tool_name},
             messages=[{"role": "user", "content": user}],
         )
+        _record_usage(model, resp)
         for block in resp.content:
             if block.type == "tool_use" and block.name == tool_name:
                 return block.input

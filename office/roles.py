@@ -1,7 +1,17 @@
 """System prompts for the Chief Agent and each specialist role, expanded
-from prompt.txt's one-line role descriptions."""
+from prompt.txt's one-line role descriptions.
+
+The module-level dicts are the stock defaults. Anything a user edits in the
+dashboard is stored separately (office/store.py) and layered on top by the
+accessor functions at the bottom - always read through those, not the dicts,
+so customised agents are respected.
+"""
 
 from __future__ import annotations
+
+from typing import Any, Dict, List
+
+from . import store
 
 SHARED_CONSTRAINTS = """
 Constraints that apply to all output:
@@ -128,3 +138,92 @@ ROLE_DISPLAY_NAMES = {
 }
 
 ROLE_IDS = list(ROLE_PROMPTS.keys())
+
+# Desk avatar glyph per role - decorative, no bearing on orchestration.
+ROLE_ICONS = {
+    "solution_architect": "\U0001F3D7",
+    "frontend_developer": "\U0001F5A5",
+    "backend_developer": "\U0001F5C4",
+    "ui_ux_designer": "\U0001F3A8",
+    "security_engineer": "\U0001F512",
+    "qa_engineer": "\U0001F41E",
+    "content_marketing_agent": "\U0001F4E3",
+    "pricing_proposal_agent": "\U0001F4B0",
+    "opportunity_scout": "\U0001F52D",
+    "prospect_analyst": "\U0001F4CA",
+}
+
+# Per-role identity colour used on the desk nameplate, kept distinct from the
+# live status colour (queued/running/done/failed) on the desk border.
+ROLE_ACCENTS = {
+    "solution_architect": "#6d8cff",
+    "frontend_developer": "#ff6fae",
+    "backend_developer": "#34d399",
+    "ui_ux_designer": "#b78bff",
+    "security_engineer": "#f2b84b",
+    "qa_engineer": "#38d6d6",
+    "content_marketing_agent": "#ff8a65",
+    "pricing_proposal_agent": "#5eb5ff",
+    "opportunity_scout": "#c792ff",
+    "prospect_analyst": "#7ee787",
+}
+
+ROLE_TAGLINES = {
+    "solution_architect": "Defines system architecture, tech stack, integrations.",
+    "frontend_developer": "Builds UI components, responsive layouts, accessibility.",
+    "backend_developer": "Designs APIs, databases, server logic, authentication.",
+    "ui_ux_designer": "Wireframes, mockups, user flows, usability improvements.",
+    "security_engineer": "Reviews for vulnerabilities, compliance, secure coding.",
+    "qa_engineer": "Drafts test plans, unit/integration cases, bug checks.",
+    "content_marketing_agent": "Drafts copy, SEO strategy, landing page text.",
+    "pricing_proposal_agent": "Suggests pricing tiers, packages, business models.",
+    "opportunity_scout": "Identifies extra features/extensions for business value.",
+    "prospect_analyst": "Drafts competitor analysis, market positioning insights.",
+}
+
+
+def default_meta(role_id: str) -> Dict[str, Any]:
+    """The stock, un-customised definition of one agent."""
+    return {
+        "id": role_id,
+        "name": ROLE_DISPLAY_NAMES[role_id],
+        "prompt": ROLE_PROMPTS[role_id],
+        "icon": ROLE_ICONS[role_id],
+        "accent": ROLE_ACCENTS[role_id],
+        "tagline": ROLE_TAGLINES[role_id],
+        "model": "",
+        "enabled": True,
+    }
+
+
+def role_meta(role_id: str) -> Dict[str, Any]:
+    """One agent's definition with any dashboard edits applied."""
+    meta = default_meta(role_id)
+    override = store.load_role_overrides().get(role_id, {})
+    for key, value in override.items():
+        # A blank text field means "fall back to the default", so a user can
+        # clear a box to undo one field without resetting the whole agent.
+        if key in meta and (value != "" or key in ("model",)):
+            meta[key] = value
+    meta["customised"] = bool(override)
+    return meta
+
+
+def all_role_meta() -> List[Dict[str, Any]]:
+    return [role_meta(rid) for rid in ROLE_IDS]
+
+
+def role_prompt(role_id: str) -> str:
+    return role_meta(role_id)["prompt"]
+
+
+def display_name(role_id: str) -> str:
+    return role_meta(role_id)["name"]
+
+
+def is_enabled(role_id: str) -> bool:
+    return bool(role_meta(role_id)["enabled"])
+
+
+def enabled_role_ids() -> List[str]:
+    return [rid for rid in ROLE_IDS if is_enabled(rid)]

@@ -10,9 +10,23 @@ tool never executes code or deploys anything.
 
 ## Setup
 
+Windows PowerShell:
+
+```powershell
+python -m venv .venv
+.venv\Scripts\python -m pip install -r requirements.txt
+Copy-Item .env.example .env   # then fill in ANTHROPIC_API_KEY
+```
+
+`requirements.txt` pins the direct dependencies. Use `requirements.lock` when
+you need to reproduce the exact dependency set used for development.
+
+macOS/Linux:
+
 ```bash
-python -m venv venv && source venv/bin/activate   # venv\Scripts\activate on Windows
-pip install -r requirements.txt
+python -m venv .venv
+source .venv/bin/activate
+python -m pip install -r requirements.txt
 cp .env.example .env   # then fill in ANTHROPIC_API_KEY
 ```
 
@@ -24,7 +38,7 @@ python cli.py
 python cli.py "Build a business website with a product catalog and contact form."
 ```
 
-Each run writes to `runs/<timestamp>_<mission-slug>/`:
+Each run writes to `runs/<timestamp>_<unique-id>_<mission-slug>/`:
 - `deliverable.md` — the human-readable deliverable (all 6 sections from
   `prompt.txt`'s format, ending in the "Draft only" review banner)
 - `run.json` — the same data structured, for auditing or feeding into
@@ -65,21 +79,45 @@ python webapp.py
 # then open http://127.0.0.1:5000
 ```
 
-A local Flask dashboard: type a mission, optionally check "Mock mode", click
-"Run mission", and watch each of the ten role cards flip from Standby →
-Queued → Running → Done/Failed as `office/chief.py` works through the
-dependency graph. It polls `GET /status` every ~1.2s and reuses
-`run_mission`/`save_run` directly, so dashboard runs land in `runs/` exactly
+A local Flask workspace with four views:
+
+- **The Office** — type a mission, run it, and watch each desk on the office
+  floor flip from Standby → Queued → Running → Done/Failed as
+  `office/chief.py` works through the dependency graph. Click any desk to
+  read all assignments given to that agent and each completed draft as soon
+  as it arrives. Live counters show elapsed
+  time, API calls, tokens, and an estimated cost. **Stop** cancels a run —
+  in-flight calls finish, nothing new is dispatched, and synthesis is skipped
+  so a cancel doesn't cost another call.
+- **Run History** — every saved run with its agent count, failures, duration
+  and cost. Open one to read each agent's draft, re-run its mission, or
+  delete it.
+- **Team Roster** — edit any agent: display name, icon, accent colour, desk
+  tagline, model, and its full system prompt. Disabling an agent removes it
+  from the Chief's assignable roles, so it is never given work (fewer calls
+  per mission). "Reset to default" restores the stock definition.
+- **Settings** — default and Chief models, retry count, max parallel agents,
+  per-call token caps, and a workspace-wide mock-mode default, plus a health
+  panel (API key detected, effective models, folders) and the model pricing
+  table used for cost estimates.
+
+Edits are stored in `.office/` (gitignored) and layer on top of the code
+defaults, so deleting that folder restores stock behaviour. The dashboard
+reuses `run_mission`/`save_run` directly, so its runs land in `runs/` exactly
 like CLI runs.
 
 ## Test
 
-```bash
-python -m pytest tests/ -v
+```powershell
+.venv\Scripts\python -m pytest tests/ -v
 ```
 
 Tests mock the Anthropic client entirely, so they run with no API key and
-no network access.
+no network access. They cover orchestration (dependency order, concurrency,
+failure capture, cancellation, dependency-graph validation, disabled-agent
+filtering and live output events), Flask API validation, the settings/agent
+override store, collision-resistant run persistence and its run-id
+path-traversal guard, the deliverable format, and the schema.
 
 ## How it works
 
@@ -125,12 +163,18 @@ no network access.
 
 - **Anthropic-only.** `prompt.txt` mentions routing code to a different
   model (e.g. `gpt-oss-20b`); this build only varies Claude model *tier*
-  per role (`office/config.py: MODEL_OVERRIDES`), not provider. Swapping in
-  a second provider would mean adding a small adapter in
-  `office/llm_client.py` and keying `MODEL_OVERRIDES` by provider+model.
-- **No persistent mission history/search across runs.** `webapp.py` gives
-  live status for the *current* run only (in-memory state, one process);
-  there's still no index/search over past `runs/*/run.json` folders.
-- **Single mission at a time** — no queue, so two people running missions
-  concurrently just get two independent `runs/` folders; fine for solo use,
-  would need a lock or a proper job queue for shared/production use.
+  per role, not provider. Swapping in a second provider would mean adding a
+  small adapter in `office/llm_client.py` and keying the model settings by
+  provider+model.
+- **Single mission at a time** — the dashboard holds one run's state in
+  memory in one process, so there's no queue and no concurrent missions.
+  Fine for solo use; shared use would need a job queue and a real datastore.
+- **Cancel is cooperative.** Stopping a mission prevents new subtasks from
+  being dispatched and skips synthesis, but calls already in flight run to
+  completion (and are still billed).
+- **Cost figures are estimates.** They come from a pricing table in
+  `office/config.py` multiplied by reported token usage — useful for relative
+  comparison, not a substitute for the Anthropic console.
+- **No auth.** The dashboard binds to localhost and assumes a single trusted
+  user; the agent-editing and delete endpoints have no access control, so
+  don't expose it on a network as-is.

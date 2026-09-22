@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 
 
 @dataclass
@@ -20,6 +20,7 @@ class AgentOutput:
     role: str
     content: str
     error: Optional[str] = None
+    duration_seconds: Optional[float] = None
 
 
 @dataclass
@@ -30,3 +31,10 @@ class Deliverable:
     synthesis: str
     next_actions: str
     review_banner: str = "⚠️ Draft only — requires human approval before use."
+    cancelled: bool = False
+    mock: bool = False
+    duration_seconds: Optional[float] = None
+    usage: Optional[Dict[str, Any]] = None
+    started_at: Optional[str] = None
+    finished_at: Optional[str] = None
+    configuration: Dict[str, Any] = field(default_factory=dict)
