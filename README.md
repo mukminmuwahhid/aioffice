@@ -56,6 +56,11 @@ python cli.py --mock "Build a business website with a product catalog and contac
 python live_cli.py --mock "..."
 ```
 
+Mock runs also produce a projected token and cost budget. Input/output tokens
+are estimated at roughly four characters per token, then priced using the
+selected model. The dashboard shows totals and a per-call breakdown while
+making zero real API calls and incurring zero charges.
+
 It's driven by the `AI_OFFICE_MOCK` env var (`office/config.py: is_mock_mode`),
 which `office/llm_client.py` checks before making any API call.
 

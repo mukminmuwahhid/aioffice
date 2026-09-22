@@ -5,6 +5,7 @@ step so the result is always machine-parseable)."""
 from __future__ import annotations
 
 import logging
+import json
 import random
 import threading
 import time
@@ -17,12 +18,30 @@ from . import config
 log = logging.getLogger("office.llm_client")
 
 _usage_lock = threading.Lock()
-_usage: Dict[str, Any] = {"input_tokens": 0, "output_tokens": 0, "calls": 0, "by_model": {}}
+_usage: Dict[str, Any] = {
+    "input_tokens": 0,
+    "output_tokens": 0,
+    "calls": 0,
+    "api_calls": 0,
+    "mock_estimate": False,
+    "by_model": {},
+    "call_details": [],
+}
 
 
 def reset_usage() -> None:
     with _usage_lock:
-        _usage.update({"input_tokens": 0, "output_tokens": 0, "calls": 0, "by_model": {}})
+        _usage.update(
+            {
+                "input_tokens": 0,
+                "output_tokens": 0,
+                "calls": 0,
+                "api_calls": 0,
+                "mock_estimate": False,
+                "by_model": {},
+                "call_details": [],
+            }
+        )
 
 
 def get_usage() -> Dict[str, Any]:
@@ -32,7 +51,10 @@ def get_usage() -> Dict[str, Any]:
             "input_tokens": _usage["input_tokens"],
             "output_tokens": _usage["output_tokens"],
             "calls": _usage["calls"],
+            "api_calls": _usage["api_calls"],
+            "mock_estimate": _usage["mock_estimate"],
             "by_model": {m: dict(v) for m, v in _usage["by_model"].items()},
+            "call_details": [dict(item) for item in _usage["call_details"]],
         }
 
     total_cost = 0.0
@@ -44,25 +66,66 @@ def get_usage() -> Dict[str, Any]:
             total_cost += cost
             priced = True
     snapshot["cost_usd"] = round(total_cost, 6) if priced else None
+    for detail in snapshot["call_details"]:
+        detail["cost_usd"] = config.estimate_cost(
+            detail["model"], detail["input_tokens"], detail["output_tokens"]
+        )
     return snapshot
 
 
-def _record_usage(model: str, resp: Any) -> None:
+def _record_counts(
+    model: str,
+    input_tokens: int,
+    output_tokens: int,
+    *,
+    label: str,
+    mock: bool,
+) -> None:
+    with _usage_lock:
+        _usage["input_tokens"] += input_tokens
+        _usage["output_tokens"] += output_tokens
+        _usage["calls"] += 1
+        _usage["api_calls"] += 0 if mock else 1
+        _usage["mock_estimate"] = _usage["mock_estimate"] or mock
+        per_model = _usage["by_model"].setdefault(
+            model, {"input_tokens": 0, "output_tokens": 0, "calls": 0}
+        )
+        per_model["input_tokens"] += input_tokens
+        per_model["output_tokens"] += output_tokens
+        per_model["calls"] += 1
+        _usage["call_details"].append(
+            {
+                "label": label,
+                "model": model,
+                "input_tokens": input_tokens,
+                "output_tokens": output_tokens,
+                "mock": mock,
+            }
+        )
+
+
+def _estimate_tokens(text: str) -> int:
+    """Portable mock estimate: roughly four UTF-8 characters per token."""
+    return max(1, (len(text) + 3) // 4)
+
+
+def _record_mock_usage(model: str, input_text: str, output_text: str, label: str) -> None:
+    _record_counts(
+        model,
+        _estimate_tokens(input_text),
+        _estimate_tokens(output_text),
+        label=label,
+        mock=True,
+    )
+
+
+def _record_usage(model: str, resp: Any, *, label: str) -> None:
     usage = getattr(resp, "usage", None)
     if usage is None:
         return
     inp = getattr(usage, "input_tokens", 0) or 0
     out = getattr(usage, "output_tokens", 0) or 0
-    with _usage_lock:
-        _usage["input_tokens"] += inp
-        _usage["output_tokens"] += out
-        _usage["calls"] += 1
-        per_model = _usage["by_model"].setdefault(
-            model, {"input_tokens": 0, "output_tokens": 0, "calls": 0}
-        )
-        per_model["input_tokens"] += inp
-        per_model["output_tokens"] += out
-        per_model["calls"] += 1
+    _record_counts(model, inp, out, label=label, mock=False)
 
 # A plausible-looking task breakdown used by call_tool in mock mode, so the
 # whole pipeline (dependency ordering, concurrency, synthesis) can be
@@ -132,11 +195,13 @@ def call_text(system: str, user: str, *, model: str, max_tokens: int = 4096) -> 
     if config.is_mock_mode():
         _mock_delay()
         role_hint = system.strip().splitlines()[0][:100]
-        return (
+        output = (
             f"[MOCK OUTPUT - no API call made]\n\n"
             f"Role brief: {role_hint}\n\n"
             f"Simulated draft response for:\n{user[:300]}"
         )
+        _record_mock_usage(model, system + "\n" + user, output, role_hint)
+        return output
 
     client = get_client()
 
@@ -147,7 +212,7 @@ def call_text(system: str, user: str, *, model: str, max_tokens: int = 4096) -> 
             system=system,
             messages=[{"role": "user", "content": user}],
         )
-        _record_usage(model, resp)
+        _record_usage(model, resp, label=system.strip().splitlines()[0][:100])
         return "".join(block.text for block in resp.content if block.type == "text")
 
     return _with_retries(_do)
@@ -168,8 +233,12 @@ def call_tool(
     if config.is_mock_mode():
         _mock_delay()
         if tool_name == "submit_task_breakdown":
-            return {"subtasks": _MOCK_SUBTASKS}
-        return {}
+            output = {"subtasks": _MOCK_SUBTASKS}
+        else:
+            output = {}
+        input_text = system + "\n" + user + "\n" + json.dumps(input_schema)
+        _record_mock_usage(model, input_text, json.dumps(output), tool_name)
+        return output
 
     client = get_client()
     tool = {
@@ -187,7 +256,7 @@ def call_tool(
             tool_choice={"type": "tool", "name": tool_name},
             messages=[{"role": "user", "content": user}],
         )
-        _record_usage(model, resp)
+        _record_usage(model, resp, label=tool_name)
         for block in resp.content:
             if block.type == "tool_use" and block.name == tool_name:
                 return block.input
